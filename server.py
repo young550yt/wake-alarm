@@ -5,9 +5,11 @@ Backend owns reliability: scheduling, escalating sound (winsound), TTS voice,
 dismissal tasks, missed-alarm detection and Windows integration calls.
 The browser UI is a client only; audio never depends on it.
 """
+import ctypes
 import json
 import math
 import os
+import queue
 import random
 import socket
 import struct
@@ -33,6 +35,7 @@ WIN_SCRIPT = os.path.join(APP_DIR, 'win_integration.ps1')
 WAKE_TASK = os.path.join(APP_DIR, 'wake_task.py')
 SLEEP_PENDING = os.path.join(APP_DIR, 'sleep_test_pending.json')
 SLEEP_RESULT = os.path.join(APP_DIR, 'sleep_test_result.json')
+VOLUME_BACKUP = os.path.join(APP_DIR, 'volume_backup.json')
 PORT = 8520
 MAX_LOG = 1_000_000
 MAX_HISTORY = 400
@@ -230,6 +233,153 @@ def stop_voices():
             except Exception:
                 pass
         _voice_procs.clear()
+
+
+# ---------------------------------------------------------- volume control
+# The alarm forces the master volume to 100% while it rings (pycaw) and
+# restores the previous level when it stops. The previous level is kept in
+# VOLUME_BACKUP so even a crash/restart of the server cannot leave the
+# laptop stuck at max volume. Without pycaw installed this is a no-op.
+#
+# All COM work happens on one dedicated thread: COM must be initialized per
+# thread (CoInitialize), and the server otherwise calls this from HTTP
+# handler threads and one-shot ring threads.
+_vol_mod = {'loaded': False, 'au': None}
+_vol_cache = {'at': 0.0, 'data': None}
+_vol_jobs = queue.Queue()
+_vol_start = {'ok': False}
+_vol_start_lock = threading.Lock()
+
+
+def _vol_api():
+    if not _vol_mod['loaded']:
+        _vol_mod['loaded'] = True
+        try:
+            from pycaw.pycaw import AudioUtilities
+            _vol_mod['au'] = AudioUtilities
+        except Exception as e:
+            log('volume control unavailable (pycaw missing): %s' % e)
+    return _vol_mod['au']
+
+
+def _vol_read_raw():
+    au = _vol_api()
+    if not au:
+        return None
+    ev = au.GetSpeakers().EndpointVolume
+    return {'percent': round(ev.GetMasterVolumeLevelScalar() * 100.0, 1),
+            'mute': bool(ev.GetMute())}
+
+
+def _vol_max_raw():
+    au = _vol_api()
+    if not au:
+        return False
+    prev = None
+    if not os.path.exists(VOLUME_BACKUP):
+        prev = _vol_read_raw()      # only the first max keeps a backup
+    ev = au.GetSpeakers().EndpointVolume
+    ev.SetMasterVolumeLevelScalar(1.0, None)
+    ev.SetMute(False, None)
+    if prev:
+        with open(VOLUME_BACKUP, 'w', encoding='utf-8') as f:
+            json.dump(prev, f)
+        log('volume: %.0f%% -> 100%%' % prev['percent'])
+    return True
+
+
+def _vol_restore_raw():
+    if not os.path.exists(VOLUME_BACKUP):
+        return False
+    with open(VOLUME_BACKUP, encoding='utf-8') as f:
+        prev = json.load(f)
+    os.remove(VOLUME_BACKUP)
+    au = _vol_api()
+    if not au:
+        return False
+    ev = au.GetSpeakers().EndpointVolume
+    # If the level still looks like ours (100 %, unmuted) put the old level
+    # back. Otherwise the user changed the volume during the ring (e.g. it was
+    # too loud) - keep their choice instead of stomping it.
+    if ev.GetMasterVolumeLevelScalar() * 100.0 < 99.5 or ev.GetMute():
+        log('volume: user changed it during the ring - keeping current level')
+        return False
+    ev.SetMasterVolumeLevelScalar(max(0.0, min(1.0, float(prev.get('percent', 100)) / 100.0)), None)
+    ev.SetMute(bool(prev.get('mute')), None)
+    log('volume: restored to %.0f%%' % float(prev.get('percent', 100)))
+    return True
+
+
+def _vol_worker():
+    try:
+        rc = ctypes.windll.ole32.CoInitializeEx(None, 2)  # COINIT_APARTMENTTHREADED
+        if rc < 0:
+            log('COM init failed (0x%08X) - volume control off' % (rc & 0xFFFFFFFF))
+    except Exception as e:
+        log('COM init failed: %s' % e)
+    while True:
+        job = _vol_jobs.get()
+        if job is None:
+            return
+        fn, out, ev = job
+        try:
+            out['v'] = fn()
+        except Exception as e:
+            log('volume op failed: %s' % e)
+            out['v'] = None
+        ev.set()
+
+
+def _vol_call(fn, timeout=6.0):
+    """Run a volume operation on the dedicated COM thread and wait for it."""
+    with _vol_start_lock:
+        if not _vol_start['ok']:
+            threading.Thread(target=_vol_worker, daemon=True, name='volume').start()
+            _vol_start['ok'] = True
+    out, ev = {}, threading.Event()
+    _vol_jobs.put((fn, out, ev))
+    if not ev.wait(timeout):
+        log('volume op timed out')
+        return None
+    return out.get('v')
+
+
+def volume_read():
+    """Current master volume {'percent': 0-100, 'mute': bool} or None."""
+    v = _vol_call(_vol_read_raw)
+    if not v:
+        return None
+    _vol_cache['at'] = time.time()
+    _vol_cache['data'] = v
+    return v
+
+
+def volume_state():
+    """Cached volume for the state poll (refresh at most every 3 s)."""
+    now = time.time()
+    if now - _vol_cache['at'] > 3:
+        _vol_cache['at'] = now
+        _vol_cache['data'] = _vol_call(_vol_read_raw)
+    return _vol_cache['data']
+
+
+def volume_max():
+    """Jump to 100% + unmute for a ringing alarm; remember the old level."""
+    res = _vol_call(_vol_max_raw)
+    _vol_cache['at'] = 0.0
+    return bool(res)
+
+
+def volume_restore():
+    """Put the pre-ring level back (no-op when we never changed it)."""
+    try:
+        if not os.path.exists(VOLUME_BACKUP):
+            return False
+    except Exception:
+        return False
+    res = _vol_call(_vol_restore_raw)
+    _vol_cache['at'] = 0.0
+    return bool(res)
 
 
 # ------------------------------------------------------------ Windows calls
@@ -452,6 +602,7 @@ DEFAULT_CONFIG = {
         'battery_warn_pct': 30,
         'grace_minutes': 45,
         'auto_open': True,
+        'max_volume': True,
     },
 }
 
@@ -463,6 +614,34 @@ def _deep_merge(base, over):
             out[k] = _deep_merge(out[k], v)
         else:
             out[k] = v
+    return out
+
+
+def _normalize_alarms(raw):
+    """Validate a list of alarm entries -> [{'id','time','days','enabled'}].
+    Returns None when any entry is unusable (so save can reject the batch)."""
+    out = []
+    for x in (raw or []):
+        if not isinstance(x, dict):
+            return None
+        try:
+            h, m = _hm(str(x.get('time', '')).strip())
+            if not (0 <= h < 24 and 0 <= m < 60):
+                raise ValueError
+            t = '%02d:%02d' % (h, m)
+        except Exception:
+            return None
+        try:
+            days = sorted({int(d) for d in (x.get('days') or []) if 0 <= int(d) <= 6})
+        except Exception:
+            return None
+        try:
+            aid = int(x.get('id'))
+        except Exception:
+            aid = 0
+        out.append({'id': aid or (max([r['id'] for r in out] or [0]) + 1),
+                    'time': t, 'days': days,
+                    'enabled': bool(x.get('enabled', True))})
     return out
 
 
@@ -481,9 +660,36 @@ class Store:
                 self.history = json.load(f)
         except Exception:
             self.history = []
+        self._migrate_alarms()
         if not self.config.get('installed_at'):
             self.config['installed_at'] = datetime.now().isoformat(timespec='seconds')
             self.save_config()
+
+    def _migrate_alarms(self):
+        """config['alarms'] is the list of all alarms; older configs only had
+        the single 'alarm' object - promote it (idempotent)."""
+        cfg = self.config
+        rows = _normalize_alarms(cfg.get('alarms'))
+        if not rows:
+            a = cfg.get('alarm') or {}
+            rows = _normalize_alarms([{'time': a.get('time') or '06:00',
+                                       'days': a.get('days') or [],
+                                       'enabled': a.get('enabled', True), 'id': 1}])
+        if not rows:  # last resort: sane default so the app always has one
+            rows = _normalize_alarms([{'time': '06:00', 'days': list(range(7)),
+                                       'enabled': True, 'id': 1}])
+        cfg['alarms'] = rows
+        self._mirror_primary()
+
+    def _mirror_primary(self):
+        """Keep the legacy single-alarm keys (and old API consumers) in sync
+        with the first alarm entry; commitment/letter stay global."""
+        rows = (self.config.get('alarms') or [])
+        if rows:
+            a = self.config['alarm']
+            a['time'] = rows[0]['time']
+            a['days'] = list(rows[0]['days'])
+            a['enabled'] = rows[0]['enabled']
 
     def save_config(self):
         tmp = CONFIG_PATH + '.tmp'
@@ -736,48 +942,69 @@ class Engine:
         return self.boot_cache['data']
 
     # ---- core scheduling
+    def due_candidates(self, now):
+        """(occ, alarm) for every armed alarm whose most recent occurrence is
+        due - deduplicated (two alarms at the same time ring once), earliest
+        occurrence first."""
+        out, seen = [], set()
+        for a in (self.store.config.get('alarms') or []):
+            if not a.get('enabled'):
+                continue
+            try:
+                days = [int(d) for d in a.get('days', [])]
+            except Exception:
+                days = []
+            if not days:
+                continue
+            try:
+                occ = most_recent_occurrence(now, a['time'], days)
+            except Exception:
+                continue
+            if not occ or occ in seen:
+                continue
+            seen.add(occ)
+            out.append((occ, a))
+        out.sort(key=lambda x: x[0])
+        return out
+
     def tick(self):
         now = datetime.now()
+        cfg = self.store.config
+        grace = timedelta(minutes=int(cfg['settings'].get('grace_minutes', 45)))
+        installed = None
+        if cfg.get('installed_at'):
+            try:
+                installed = datetime.fromisoformat(cfg['installed_at'])
+            except Exception:
+                installed = None
+        cands = self.due_candidates(now)
+        if not cands:
+            with self.lock:
+                if self.ringing:
+                    self._progress(now)
+            return
         with self.lock:
             if self.ringing:
                 self._progress(now)
                 return
-        cfg = self.store.config
-        alarm = cfg['alarm']
-        if not alarm.get('enabled'):
-            return
-        days = [int(d) for d in alarm.get('days', [])]
-        if not days:
-            return
-        occ = most_recent_occurrence(now, alarm['time'], days)
-        if not occ:
-            return
-        installed = cfg.get('installed_at')
-        if installed:
-            try:
-                if occ <= datetime.fromisoformat(installed):
-                    return  # before the app existed - nothing to report
-            except Exception:
-                pass
-        rec = self.store.find_rec(occ)
-        grace = timedelta(minutes=int(cfg['settings'].get('grace_minutes', 45)))
-        with self.lock:
-            if self.ringing:
-                return
-            if rec and rec.get('dismissed_at'):
-                return
-            if rec and rec.get('missed'):
-                return
-            if rec and rec.get('snoozed_until'):
-                try:
-                    if now < datetime.fromisoformat(rec['snoozed_until']):
-                        return
-                except Exception:
-                    pass
-            elapsed = now - occ
-            if elapsed <= grace:
-                self._ring(occ, (rec or {}).get('kind') or 'wake', rec)
-            else:
+            for occ, a in cands:
+                if installed and occ <= installed:
+                    continue  # before the app existed - nothing to report
+                rec = self.store.find_rec(occ)
+                if rec and rec.get('dismissed_at'):
+                    continue
+                if rec and rec.get('missed'):
+                    continue
+                if rec and rec.get('snoozed_until'):
+                    try:
+                        if now < datetime.fromisoformat(rec['snoozed_until']):
+                            continue
+                    except Exception:
+                        pass
+                elapsed = now - occ
+                if elapsed <= grace:
+                    self._ring(occ, (rec or {}).get('kind') or 'wake', rec)
+                    return  # one ring at a time; remaining cands ring after this one ends
                 if not rec:
                     self._mark_missed(occ, 'wake', None, now)
                 elif not rec.get('missed') and not rec.get('dismissed_at'):
@@ -824,6 +1051,10 @@ class Engine:
         }
         self.last_voice = 0.0
         self.player.play(os.path.join(SOUND_DIR, STAGE_FILES[0]))
+        if cfg['settings'].get('max_volume', True):
+            # background thread: the first call may import pycaw (~0.2 s) and
+            # the chime should not wait for it
+            threading.Thread(target=volume_max, daemon=True).start()
         log('RING %s kind=%s late=%ss' % (occ, kind, rec['late_by_s']))
         if cfg['settings'].get('auto_open', True) and (time.time() - self.last_client) > 15:
             open_fullscreen('http://127.0.0.1:%d/' % PORT)
@@ -879,6 +1110,7 @@ class Engine:
             now = datetime.now()
             self.player.stop()
             stop_voices()
+            volume_restore()
             rec = self.store.find_rec(r['occ'], r['kind']) or {}
             rec['scheduled'] = r['occ'].isoformat(timespec='seconds')
             rec['kind'] = r['kind']
@@ -907,6 +1139,7 @@ class Engine:
             now = datetime.now()
             self.player.stop()
             stop_voices()
+            volume_restore()
             until = now + timedelta(minutes=int(s.get('snooze_minutes', 5)))
             rec['scheduled'] = r['occ'].isoformat(timespec='seconds')
             rec['kind'] = r['kind']
@@ -952,13 +1185,17 @@ class Engine:
         return {'ok': ok}
 
     def ack_missed(self):
+        # Clear every unacked missed alarm: acking just one would leave the
+        # banner showing the next-oldest record straight away.
         with self.store.lock:
-            for r in reversed(self.store.history):
+            n = 0
+            for r in self.store.history:
                 if r.get('missed') and not r.get('acked'):
                     r['acked'] = True
-                    self.store.save_history()
-                    return {'ok': True}
-        return {'ok': False}
+                    n += 1
+            if n:
+                self.store.save_history()
+            return {'ok': bool(n), 'acked': n}
 
     def clear_history(self):
         with self.store.lock:
@@ -972,19 +1209,22 @@ def build_state(engine, store):
     now = datetime.now()
     cfg = store.config
     alarm = cfg['alarm']
-    days = [int(d) for d in alarm.get('days', [])]
+    rows = cfg.get('alarms') or []
     out = {
         'now': now.isoformat(timespec='seconds'),
         'alarm': alarm,
+        'alarms': rows,
         'settings': cfg['settings'],
         'installed_at': cfg.get('installed_at'),
         'next': None,
         'next_in_s': None,
+        'next_primary': None,
         'ringing': None,
         'snoozed_until': None,
         'missed': None,
         'battery': engine.battery(),
         'windows': engine.windows_status(),
+        'volume': volume_state(),
         'client_seen': bool(engine.last_client and (time.time() - engine.last_client) < 15),
         'stage_labels': STAGE_LABELS,
         'sleep_test': sleep_test_state(),
@@ -1005,12 +1245,27 @@ def build_state(engine, store):
                 'snoozes_used': int(rec.get('snoozes', 0)) if rec else 0,
                 'snooze_max': int(cfg['settings'].get('snooze_max', 2)),
             }
-    if alarm.get('enabled') and days:
-        if not out['ringing']:
-            nxt = next_occurrence(now, alarm['time'], days)
-            if nxt:
-                out['next'] = nxt.isoformat(timespec='seconds')
-                out['next_in_s'] = int((nxt - now).total_seconds())
+    if not out['ringing']:
+        best = None
+        primary = None
+        for a in rows:
+            if not a.get('enabled'):
+                continue
+            adays = [int(d) for d in a.get('days', [])]
+            if not adays:
+                continue
+            try:
+                n = next_occurrence(now, a['time'], adays)
+            except Exception:
+                continue
+            if n and (best is None or n < best):
+                best = n
+            if primary is None:
+                primary = n  # first armed alarm owns the 'WakeAlarm' task
+        if best:
+            out['next'] = best.isoformat(timespec='seconds')
+            out['next_in_s'] = int((best - now).total_seconds())
+            out['next_primary'] = primary.isoformat(timespec='seconds') if primary else None
     for rec in reversed(store.history):
         if rec.get('snoozed_until'):
             try:
@@ -1191,7 +1446,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/windows/setup':
                 log('running Windows setup (UAC prompt may appear)...')
                 res = run_setup_elevated()
-                eng.status_cache = {'at': 0.0, 'data': None}
+                eng.status_cache = {'at': time.time(), 'data': ps_status()}
                 self._json(res)
             elif path == '/api/sleep-test':
                 self._json(start_sleep_test())
@@ -1204,36 +1459,54 @@ class Handler(BaseHTTPRequestHandler):
 
 def save_alarm(store, eng, body):
     a = body.get('alarm') or {}
-    t = str(a.get('time', '')).strip()
-    try:
-        h, m = _hm(t)
-        if not (0 <= h < 24 and 0 <= m < 60):
-            raise ValueError
-        t = '%02d:%02d' % (h, m)
-    except Exception:
-        return {'ok': False, 'error': 'Invalid time.'}
-    try:
-        days = sorted({int(d) for d in (a.get('days') or []) if 0 <= int(d) <= 6})
-    except Exception:
-        return {'ok': False, 'error': 'Invalid days.'}
-    enabled = bool(a.get('enabled', True))
-    if enabled and not days:
-        return {'ok': False,
-                'error': 'Select at least one day - an armed alarm with no days never rings.'}
+    rows_in = body.get('alarms')
+    if rows_in is None:
+        # Legacy single-alarm payload: {'alarm': {time, days, enabled, ...}}
+        t = str(a.get('time', '')).strip()
+        try:
+            h, m = _hm(t)
+            if not (0 <= h < 24 and 0 <= m < 60):
+                raise ValueError
+            t = '%02d:%02d' % (h, m)
+        except Exception:
+            return {'ok': False, 'error': 'Invalid time.'}
+        try:
+            days = sorted({int(d) for d in (a.get('days') or []) if 0 <= int(d) <= 6})
+        except Exception:
+            return {'ok': False, 'error': 'Invalid days.'}
+        rows_in = [{'id': 1, 'time': t, 'days': days,
+                    'enabled': bool(a.get('enabled', True))}]
+    if not isinstance(rows_in, list) or not rows_in:
+        return {'ok': False, 'error': 'Add at least one alarm.'}
+    if len(rows_in) > 8:
+        return {'ok': False, 'error': 'A maximum of 8 alarms can be armed.'}
+    rows = _normalize_alarms(rows_in)
+    if rows is None or len(rows) != len(rows_in):
+        return {'ok': False, 'error': 'Invalid time in one of the alarms.'}
+    enabled_any = False
+    for i, r in enumerate(rows):
+        if r['enabled'] and not r['days']:
+            return {'ok': False,
+                    'error': 'Select at least one day - an armed alarm with no days never rings.'}
+        if r['enabled']:
+            enabled_any = True
     with store.lock:
-        alarm = store.config['alarm']
-        alarm['enabled'] = enabled
-        alarm['time'] = t
-        alarm['days'] = days
-        alarm['commitment'] = str(a.get('commitment', ''))[:600]
-        alarm['letter'] = str(a.get('letter', ''))[:2000]
+        store.config['alarms'] = rows
+        if body.get('alarm') is not None:
+            alarm = store.config['alarm']
+            alarm['commitment'] = str(a.get('commitment', ''))[:600]
+            alarm['letter'] = str(a.get('letter', ''))[:2000]
+        store._mirror_primary()
         store.save_config()
     task_msg = 'not_needed'
-    if alarm['enabled'] and days:
+    if enabled_any:
         ok, msg = register_task()
         task_msg = 'ok' if ok else 'failed: ' + msg
         log('register-task -> %s' % task_msg)
-    return {'ok': True, 'task_update': task_msg, 'alarm': store.config['alarm']}
+        # refresh immediately so the status card shows the new task list now
+        eng.status_cache = {'at': time.time(), 'data': ps_status()}
+    return {'ok': True, 'task_update': task_msg,
+            'alarm': store.config['alarm'], 'alarms': store.config['alarms']}
 
 
 def save_settings(store, body):
@@ -1254,7 +1527,7 @@ def save_settings(store, body):
                 allowed['dismiss_task'] = s['dismiss_task']
             if s.get('math_difficulty') in ('easy', 'medium', 'hard'):
                 allowed['math_difficulty'] = s['math_difficulty']
-            for key in ('voice_enabled', 'auto_open'):
+            for key in ('voice_enabled', 'auto_open', 'max_volume'):
                 if key in s:
                     allowed[key] = bool(s[key])
             store.save_config()
@@ -1325,6 +1598,8 @@ def main():
         return 0
     ensure_sounds()
     store = Store()
+    if os.path.exists(VOLUME_BACKUP):
+        volume_restore()  # a crash mid-ring must not leave the laptop stuck loud
     write_paths()
     engine = Engine(store)
     Handler.engine = engine
@@ -1354,6 +1629,7 @@ def main():
         engine.stop_evt.set()
         engine.player.stop()
         stop_voices()
+        volume_restore()
         try:
             os.remove(PORT_PATH)
         except Exception:

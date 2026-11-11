@@ -18,6 +18,13 @@ Source: https://github.com/young550yt/wake-alarm (private)
 
 Python 3.12 is required (already installed on this machine).
 
+```sh
+pip install pycaw comtypes   # optional but recommended: max-volume-at-ring-time
+```
+
+Without `pycaw` everything else still works — the volume feature is simply a
+no-op.
+
 ## How the alarm works
 
 1. **Arm it** — set a wake time, pick days, write a *commitment* (why you are
@@ -42,13 +49,38 @@ Python 3.12 is required (already installed on this machine).
 Stage durations are configurable (default 45 s / 45 s / 60 s, then voice every
 20 s). These are design choices, not scientifically established intervals.
 
+### Volume at ring time
+
+By default the moment the alarm rings the **system volume jumps to 100 % and
+unmutes** (via `pycaw`), so a quiet laptop can't sleep through the chime. The
+previous level is written to `volume_backup.json` and restored when you
+dismiss or snooze — and on server startup, so even a crash mid-ring can't
+leave the laptop stuck loud. Turn it off in **Alarm behaviour → Max volume
+while ringing**.
+
+If you change the volume *during* the ring (it's too loud), that choice is
+respected: the old level is only put back while the volume still looks like
+the forced one.
+
+### Multiple alarms
+
+You can keep up to **8 alarms** — **＋ Add alarm** in the Wake-up commitment
+card. Each row has its own time, days and armed switch; the commitment and
+letter stay shared (they answer *why* you get up, not *when*).
+
+Every armed alarm gets its own scheduled wake task (`WakeAlarm`,
+`WakeAlarm_2`, …), stale tasks for deleted/disarmed alarms are cleaned up
+automatically, and the status card lists them all. The home card shows the
+soonest next ring across every armed alarm. Validation is per row: an armed
+alarm without days is rejected, exactly like the single-alarm case.
+
 ## Windows reliability
 
 Click **🛠 Run Windows setup** once. It applies (and the status card verifies):
 
 | Setting | Value | Why |
 |---|---|---|
-| Scheduled task `WakeAlarm` (WakeToRun) | registered on every alarm save | Windows wakes the PC at alarm time and runs `wake_task.py` |
+| Scheduled task `WakeAlarm` (WakeToRun) | registered on every alarm save — one per armed alarm (`WakeAlarm`, `WakeAlarm_2`, …) | Windows wakes the PC at alarm time and runs `wake_task.py` |
 | Allow wake timers (AC + battery) | enabled | lets the scheduled task wake from sleep |
 | Lid close (plugged in **and** on battery) | **Do nothing** | closing the lid doesn't sleep the alarm away |
 | Start with Windows | enabled (HKCU Run key) | server auto-starts at login |
@@ -127,6 +159,7 @@ Missed alarms raise a banner on startup until you acknowledge it.
 | Ring grace | 45 min | how late it may still ring after the scheduled time |
 | Low-battery warning | 30 % | only warns when not charging |
 | Auto-open fullscreen | on | only if no page has checked in for 15 s |
+| Max volume while ringing | on | forces 100 % at ring time, restores on dismiss/snooze (needs `pycaw`) |
 
 Sounds are synthesized at first startup into `sounds/stage1-4.wav` (no
 downloads). To use your own recordings, replace those WAV files. Drop-in

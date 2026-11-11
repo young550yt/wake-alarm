@@ -56,6 +56,9 @@ textarea{width:100%;resize:vertical;min-height:60px}
 .field label{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
 .days{display:flex;gap:6px;flex-wrap:wrap}
 .day{padding:7px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:.78rem;user-select:none;cursor:pointer}
+.alarm-row{position:relative;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;background:var(--bg2)}
+.alarm-row .two{margin-bottom:0}
+.alarm-row .del-alarm{padding:6px 12px;font-size:.82rem}
 .day.on{background:rgba(56,189,248,.15);border-color:var(--accent);color:var(--accent);font-weight:700}
 .card h3{font-size:.95rem;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .card h3 .spacer{flex:1}
@@ -171,13 +174,9 @@ tr.test td{opacity:.6}
 
   <section class="card" id="alarm-card">
     <h3>🌅 Wake-up commitment <span class="spacer"></span><span class="muted" id="next-preview"></span></h3>
-    <div class="two">
-      <div class="field"><label>Wake time</label><input type="time" id="in-time" step="60"></div>
-      <div class="field"><label>Armed</label>
-        <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="in-enabled"><span></span></label><span class="muted">Alarm active on these days</span></div>
-      </div>
-    </div>
-    <div class="field"><label>Days</label><div class="days" id="days"></div></div>
+    <div id="alarm-list"></div>
+    <div class="row"><button id="btn-add-alarm" class="ghost">＋ Add alarm</button>
+      <span class="hint">Each alarm has its own time, days and armed switch — all of them share the commitment below.</span></div>
     <div class="field"><label>Why are you waking up? (shown when the alarm rings)</label>
       <textarea id="in-commit" placeholder="e.g. Complete the planned morning study session."></textarea></div>
     <div class="field"><label>Message to your future self (spoken at stage 4, shown after you dismiss)</label>
@@ -228,6 +227,8 @@ tr.test td{opacity:.6}
         <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="s-voiceon"><span></span></label><span class="muted">Speaks your commitment</span></div></div>
       <div class="field"><label>Open fullscreen window at ring time</label>
         <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="s-autoopen"><span></span></label><span class="muted">Recommended when no page is open</span></div></div>
+      <div class="field"><label>Max volume while ringing</label>
+        <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="s-maxvol"><span></span></label><span class="muted">Jumps system volume to 100 %, restores after</span></div></div>
     </div>
     <div class="row">
       <button class="primary" id="btn-save-settings">Save behaviour</button>
@@ -368,13 +369,18 @@ function render(){
   renderSettings(); renderMissed(); renderRing(); loadHistory._pending || loadHistory();
 }
 
+function armedAny(){  // any armed alarm with at least one day = will ring
+  const rows = (S.alarms && S.alarms.length) ? S.alarms : [S.alarm];
+  return rows.some(a => a.enabled && (a.days || []).length > 0);
+}
+
 function renderHeader(){
   const b = S.battery, chip = $('#batt-chip');
   if (b){
     chip.classList.remove('hidden');
     chip.textContent = '🔋 ' + b.pct + '%' + (b.charging ? ' ⚡' : '');
     chip.className = 'chip' + (b.pct <= S.settings.battery_warn_pct && !b.charging ? ' low' : (b.charging ? ' ok' : ''));
-    const warn = b.pct <= S.settings.battery_warn_pct && !b.charging && S.alarm.enabled;
+    const warn = b.pct <= S.settings.battery_warn_pct && !b.charging && armedAny();
     $('#batt-banner').classList.toggle('hidden', !warn);
     if (warn) $('#batt-text').textContent = '⚠ Battery ' + b.pct + '% and not charging — plug in tonight or the alarm may not ring.';
   } else {
@@ -385,18 +391,31 @@ function renderHeader(){
 
 function renderNext(){
   const armed = $('#armed');
-  armed.checked = !!S.alarm.enabled;
-  $('#armed-label').textContent = S.alarm.enabled ? 'Armed' : 'Off';
+  const any = armedAny();
+  armed.checked = any;
+  $('#armed-label').textContent = any ? 'Armed' : 'Off';
+  const rows = (S.alarms && S.alarms.length) ? S.alarms : [S.alarm];
+  const nArmed = rows.filter(a => a.enabled && (a.days || []).length).length;
   const nt = $('#next-time');
   if (S.ringing){
     nt.innerHTML = 'NOW<span class="ampm"> ringing</span>';
     $('#next-meta').textContent = 'Alarm started at ' + fmtTime(S.ringing.started_at) + ' · ' + (S.ringing.kind === 'test' ? 'TEST' : 'wake-up');
   } else if (S.next){
     nt.innerHTML = esc(fmtTime(S.next));
-    $('#next-meta').textContent = 'in ' + fmtDur(S.next_in_s) + ' · ' + dayText(S.alarm.days);
+    let ownerDays = rows.length ? rows[0].days : [];
+    if (rows.length > 1){
+      const t = Date.parse(S.next);
+      for (const a of rows){
+        if (!a.enabled || !(a.days || []).length) continue;
+        const n = nextOccOne(a.time, a.days);
+        if (n && n.getTime() === t){ ownerDays = a.days; break; }
+      }
+    }
+    $('#next-meta').textContent = 'in ' + fmtDur(S.next_in_s) + ' · ' + dayText(ownerDays) +
+      (nArmed > 1 ? ' · ' + nArmed + ' alarms armed' : '');
   } else {
     nt.innerHTML = '--:--';
-    $('#next-meta').textContent = S.alarm.enabled ? 'no day selected' : 'alarm is off';
+    $('#next-meta').textContent = any ? 'no day selected' : 'alarm is off';
   }
   const sc = $('#snooze-chip');
   if (S.snoozed_until){
@@ -423,48 +442,108 @@ function renderCommit(){
   $('#letter-text').classList.toggle('hidden', !l);
 }
 
-let daysSel = [];
+let alarmRows = [];      // edit buffer: one entry per alarm {time, days, enabled}
 let formDirty = false;
 function markDirty(){
   formDirty = true;
   const h = $('#unsaved-hint');
   if (h) h.classList.remove('hidden');
 }
+function cloneRows(){
+  const src = (S.alarms && S.alarms.length) ? S.alarms : [S.alarm];
+  return src.map(a => ({time: a.time || '06:00', days: (a.days || []).slice(),
+                        enabled: a.enabled !== false}));
+}
+function rowHtml(r, i){
+  const remove = alarmRows.length > 1
+    ? '<div class="row" style="margin-top:10px;justify-content:flex-end">' +
+      '<button class="ghost danger del-alarm" data-i="' + i + '">🗑 Remove this alarm</button></div>'
+    : '';
+  return '<div class="alarm-row" data-i="' + i + '">' +
+    '<div class="two">' +
+      '<div class="field"><label>Wake time' + (i > 0 ? ' ' + (i + 1) : '') + '</label>' +
+        '<input type="time" class="in-time"' + (i === 0 ? ' id="in-time"' : '') +
+        ' step="60" value="' + esc(r.time) + '"></div>' +
+      '<div class="field"><label>Armed</label>' +
+        '<div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" class="in-enabled"' +
+        (i === 0 ? ' id="in-enabled"' : '') + (r.enabled ? ' checked' : '') + '><span></span></label>' +
+        '<span class="muted">Active on these days</span></div></div>' +
+    '</div>' +
+    '<div class="field"><label>Days</label><div class="days"' + (i === 0 ? ' id="days"' : '') + '>' +
+      DAY_LABELS.map((l, d) =>
+        '<span class="day' + (r.days.includes(d) ? ' on' : '') + '" data-d="' + d + '">' + l + '</span>').join('') +
+    '</div></div>' + remove + '</div>';
+}
+function rowsSignature(rows){
+  return rows.map(r => r.time + '|' + r.days.join(',') + '|' + (r.enabled ? 1 : 0)).join(';');
+}
+function renderAlarmRows(force){
+  const list = $('#alarm-list');
+  const sig = rowsSignature(alarmRows);
+  // Only rebuild when the data actually changed: rebuilding on every state
+  // poll (1.5 s) would rip the DOM out from under the user's clicks/focus.
+  if (!force && list.dataset.sig === sig && list.children.length === alarmRows.length) return;
+  list.innerHTML = alarmRows.map(rowHtml).join('');
+  list.dataset.sig = sig;
+  $$('#alarm-list .alarm-row').forEach(row => {
+    const i = +row.dataset.i;
+    const t = row.querySelector('.in-time');
+    const en = row.querySelector('.in-enabled');
+    t.addEventListener('input', () => { alarmRows[i].time = t.value; markDirty(); updatePreview(); });
+    en.addEventListener('change', () => { alarmRows[i].enabled = en.checked; markDirty(); updatePreview(); });
+    row.querySelectorAll('.day').forEach(d => d.addEventListener('click', () => {
+      const v = +d.dataset.d;
+      const days = alarmRows[i].days;
+      alarmRows[i].days = days.includes(v) ? days.filter(x => x !== v) : days.concat(v).sort((a, b) => a - b);
+      markDirty();
+      renderAlarmRows();
+      updatePreview();
+    }));
+    const del = row.querySelector('.del-alarm');
+    if (del) del.addEventListener('click', () => {
+      alarmRows.splice(i, 1);
+      markDirty();
+      renderAlarmRows();
+      updatePreview();
+    });
+  });
+}
 function renderForm(){
   // While the user is editing (formDirty), never overwrite their input:
   // state polls run every 1.5 s and used to snap the time field back.
   if (!formDirty){
-    $('#in-time').value = S.alarm.time;
-    $('#in-enabled').checked = !!S.alarm.enabled;
+    alarmRows = cloneRows();
+    const list = $('#alarm-list');
+    if (!list.contains(document.activeElement)) renderAlarmRows();
   }
   if (!renderForm._loaded){
-    daysSel = (S.alarm.days || []).slice();
     $('#in-commit').value = S.alarm.commitment || '';
     $('#in-letter').value = S.alarm.letter || '';
     renderForm._loaded = true;
-    renderDays();
   }
   updatePreview();
 }
-function renderDays(){
-  $('#days').innerHTML = DAY_LABELS.map((l,i) =>
-    '<span class="day' + (daysSel.includes(i) ? ' on' : '') + '" data-d="' + i + '">' + l + '</span>').join('');
-  $$('#days .day').forEach(el => el.onclick = () => {
-    const d = +el.dataset.d;
-    daysSel = daysSel.includes(d) ? daysSel.filter(x => x !== d) : daysSel.concat(d).sort();
-    markDirty();
-    renderDays(); updatePreview();
-  });
+function nextOccOne(time, days){  // mirror of the server's next_occurrence()
+  if (!days || !days.length) return null;
+  const H = parseInt(String(time || '').split(':')[0], 10);
+  const M = parseInt(String(time || '').split(':')[1], 10);
+  if (isNaN(H) || isNaN(M)) return null;
+  const now = new Date();
+  for (let k = 0; k < 8; k++){
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + k, H, M, 0, 0);
+    if (d <= now) continue;
+    if (days.includes((d.getDay() + 6) % 7)) return d;   // JS 0=Sun -> our 0=Mon
+  }
+  return null;
 }
-async function updatePreview(){
-  try {
-    const t = $('#in-time').value || S.alarm.time;
-    const r = await api('/api/preview-next?time=' + encodeURIComponent(t) + '&days=' + daysSel.join(','));
-    $('#next-preview').textContent = r.next ? 'next: ' + fmtDate(r.next) : 'no day selected';
-  } catch(e){ $('#next-preview').textContent = ''; }
+function updatePreview(){
+  let best = null;
+  for (const r of alarmRows){
+    const n = nextOccOne(r.time, r.days);
+    if (n && (!best || n < best)) best = n;
+  }
+  $('#next-preview').textContent = best ? 'next: ' + fmtDate(best.toISOString()) : 'no day selected';
 }
-$('#in-time').addEventListener('input', () => { markDirty(); updatePreview(); });
-$('#in-enabled').addEventListener('change', markDirty);
 $('#in-commit').addEventListener('input', markDirty);
 $('#in-letter').addEventListener('input', markDirty);
 
@@ -479,12 +558,21 @@ function wakeTaskWarning(w){
   if (typeof t.last_result === 'number' &&
       ![0, NOT_RUN_YET, RUNNING, TERMINATED].includes(t.last_result))
     return '⚠ Wake task last failed (result ' + t.last_result + ') — run Windows setup to re-register it.';
-  if (S.alarm.enabled){
+  const rows = (S.alarms && S.alarms.length) ? S.alarms : [S.alarm];
+  const needed = rows.filter(a => a.enabled && (a.days || []).length > 0).length;
+  if (Array.isArray(w.tasks)){
+    const have = w.tasks.filter(x => x && x.exists).length;
+    if (needed > have)
+      return '⚠ Only ' + have + ' of ' + needed + ' wake task' + (needed > 1 ? 's are' : ' is') +
+             ' registered — save your alarms again or run Windows setup.';
+  }
+  if (needed > 0){
+    const expect = S.next_primary || S.next;
     if (!t.next) return '⚠ Wake task has no next run time — run Windows setup.';
-    if (S.next){
-      const drift = Math.abs(new Date(t.next) - new Date(S.next));
+    if (expect){
+      const drift = Math.abs(new Date(t.next) - new Date(expect));
       if (drift > 5 * 60 * 1000)
-        return '⚠ Wake task next run (' + fmtDate(t.next) + ') does not match your alarm (' + fmtDate(S.next) + ') — re-save the alarm.';
+        return '⚠ Wake task next run (' + fmtDate(t.next) + ') does not match your alarm (' + fmtDate(expect) + ') — re-save the alarm.';
     }
   }
   return null;
@@ -509,6 +597,17 @@ function renderWindows(){
     ['Lid close (plugged in)', lid(w.lid_ac), String(w.lid_ac) === '0'],
     ['Lid close (battery)', lid(w.lid_dc), String(w.lid_dc) === '0'],
   ];
+  if (S.volume){
+    const v = S.volume;
+    items.push(['System volume',
+      Math.round(v.percent) + '%' + (v.mute ? ' (muted)' : '') +
+      (S.ringing ? ' · forced to 100% while ringing' : (S.settings.max_volume ? ' · jumps to 100% at ring time' : '')),
+      !v.mute]);
+  }
+  if (Array.isArray(w.tasks) && w.tasks.length > 1){
+    items.push(['Wake tasks', w.tasks.map(x => x.name).join(' · '),
+      w.tasks.every(x => x.exists)]);
+  }
   grid.innerHTML = items.map(([k, v, ok]) =>
     '<div class="status-item ' + (ok === true ? 'yes' : ok === false ? 'no' : 'unk') + '">' +
     '<span class="mark">' + (ok === true ? '✓' : ok === false ? '✗' : '?') + '</span>' +
@@ -547,6 +646,7 @@ function renderSettings(){
   $('#s-snoozemin').value = s.snooze_minutes; $('#s-snoozemax').value = s.snooze_max;
   $('#s-grace').value = s.grace_minutes; $('#s-batt').value = s.battery_warn_pct;
   $('#s-voiceon').checked = !!s.voice_enabled; $('#s-autoopen').checked = !!s.auto_open;
+  $('#s-maxvol').checked = s.max_volume !== false;
   renderSettings._loaded = true;
 }
 
@@ -710,21 +810,28 @@ $('#btn-edit-reason').onclick = () => {
   setTimeout(() => $('#in-commit').focus(), 400);
 };
 async function saveAlarm(patch){
-  const alarm = Object.assign({}, S.alarm, patch, {
-    time: patch.time !== undefined ? patch.time : $('#in-time').value,
-    days: patch.days !== undefined ? patch.days : daysSel,
-    commitment: patch.commitment !== undefined ? patch.commitment : $('#in-commit').value,
-    letter: patch.letter !== undefined ? patch.letter : $('#in-letter').value,
-    enabled: patch.enabled !== undefined ? patch.enabled : $('#in-enabled').checked,
-  });
-  if (alarm.enabled && (!alarm.days || alarm.days.length === 0)){
-    toast('Select at least one day — an armed alarm with no days never rings.', true);
-    render();
-    throw new Error('no days selected');
+  const rows = alarmRows.map(r => ({time: r.time, days: r.days.slice(), enabled: r.enabled}));
+  if (!rows.length) rows.push({time: '06:00', days: [], enabled: true});
+  if (patch.time !== undefined) rows[0].time = patch.time;          // legacy single-patch
+  if (patch.days !== undefined) rows[0].days = patch.days.slice();
+  if (patch.enabled !== undefined) rows.forEach(r => r.enabled = patch.enabled);  // master switch
+  for (const r of rows){
+    if (r.enabled && (!r.days || r.days.length === 0)){
+      toast('Select at least one day — an armed alarm with no days never rings.', true);
+      render();
+      throw new Error('no days selected');
+    }
   }
+  const alarm = Object.assign({}, S.alarm, {
+    time: rows[0].time, days: rows[0].days.slice(), enabled: rows[0].enabled,
+    commitment: $('#in-commit').value,
+    letter: $('#in-letter').value,
+  });
   try {
-    const r = await api('/api/alarm','POST',{alarm: alarm});
+    const r = await api('/api/alarm','POST',{alarm: alarm, alarms: rows});
     S.alarm = r.alarm;
+    S.alarms = r.alarms;
+    alarmRows = cloneRows();
     formDirty = false;
     const hint = $('#unsaved-hint');
     if (hint) hint.classList.add('hidden');
@@ -735,7 +842,8 @@ async function saveAlarm(patch){
       $('#task-text').textContent = '⚠ Wake task not updated: ' + r.task_update.slice(8) + ' — re-run Windows setup.';
     } else {
       $('#task-banner').classList.add('hidden');
-      toast('✓ Saved — ' + (r.task_update === 'ok' ? 'wake task updated' : 'wake task untouched'));
+      const n = (r.alarms || []).length;
+      toast('✓ Saved — ' + (r.task_update === 'ok' ? 'wake task' + (n > 1 ? 's' : '') + ' updated' : 'wake task untouched'));
     }
     return r;
   } catch(e){
@@ -745,6 +853,16 @@ async function saveAlarm(patch){
   }
 }
 $('#btn-save-alarm').onclick = () => saveAlarm({}).catch(()=>{});
+$('#btn-add-alarm').onclick = () => {
+  const base = alarmRows[alarmRows.length - 1] || {time: '07:00', days: [0,1,2,3,4,5,6]};
+  const H = parseInt(String(base.time || '07:00').split(':')[0], 10);
+  const M = parseInt(String(base.time || '07:00').split(':')[1], 10) || 0;
+  const t = String((H + 1) % 24).padStart(2,'0') + ':' + String(M).padStart(2,'0');
+  alarmRows.push({time: t, days: (base.days || []).slice(), enabled: true});
+  markDirty();
+  renderAlarmRows();
+  updatePreview();
+};
 $('#btn-test-ring').onclick = async () => {
   try { await api('/api/test-ring','POST',{silent:false}); toast('Alarm ringing — go dismiss it!'); loadState(); }
   catch(e){ toast(e.message, true); }
@@ -796,6 +914,7 @@ $('#btn-save-settings').onclick = async () => {
     battery_warn_pct: $('#s-batt').value,
     voice_enabled: $('#s-voiceon').checked,
     auto_open: $('#s-autoopen').checked,
+    max_volume: $('#s-maxvol').checked,
   };
   try { await api('/api/settings','POST',{settings}); toast('✓ Behaviour saved'); loadState(); }
   catch(e){ toast(e.message, true); }

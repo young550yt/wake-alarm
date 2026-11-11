@@ -36,18 +36,44 @@ function Register-WakeTask {
   if (-not $cfg) { throw 'config.json missing' }
   $paths = Read-Json (Join-Path $AppDir '_paths.json')
   if (-not $paths) { throw '_paths.json missing - start the alarm app once first' }
-  $t = [DateTime]::ParseExact([string]$cfg.alarm.time, 'HH:mm', $null)
-  $days = @($cfg.alarm.days | ForEach-Object { [int]$_ })
-  if ($days.Count -eq 0) { throw 'alarm has no days selected' }
-  $action = New-ScheduledTaskAction -Execute $paths.pythonw -Argument ('"{0}"' -f $paths.wake_task)
-  if ($days.Count -ge 7) {
-    $trigger = New-ScheduledTaskTrigger -Daily -At $t
+  # One scheduled task per armed alarm: 'WakeAlarm', 'WakeAlarm_2', ...
+  $rows = @()
+  if ($cfg.PSObject.Properties['alarms'] -and @($cfg.alarms).Count -gt 0) {
+    foreach ($x in @($cfg.alarms)) {
+      if (-not $x.enabled) { continue }
+      $d = @($x.days | ForEach-Object { [int]$_ })
+      if ($d.Count -eq 0) { continue }
+      $rows += , @([string]$x.time, $d)
+    }
   } else {
-    $dows = @($days | ForEach-Object { $DayNames[$_] })
-    $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $dows -At $t
+    $d = @($cfg.alarm.days | ForEach-Object { [int]$_ })
+    if ($d.Count -gt 0) { $rows += , @([string]$cfg.alarm.time, $d) }
   }
+  if ($rows.Count -eq 0) { throw 'no armed alarm with days selected' }
+  $action = New-ScheduledTaskAction -Execute $paths.pythonw -Argument ('"{0}"' -f $paths.wake_task)
   $settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-  Register-ScheduledTask -TaskName 'WakeAlarm' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+  $names = @()
+  for ($i = 0; $i -lt $rows.Count; $i++) {
+    $name = if ($i -eq 0) { 'WakeAlarm' } else { 'WakeAlarm_' + ($i + 1) }
+    $names += $name
+    $t = [DateTime]::ParseExact($rows[$i][0], 'HH:mm', $null)
+    $days = $rows[$i][1]
+    if ($days.Count -ge 7) {
+      $trigger = New-ScheduledTaskTrigger -Daily -At $t
+    } else {
+      $dows = @($days | ForEach-Object { $DayNames[$_] })
+      $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $dows -At $t
+    }
+    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+  }
+  # Drop tasks left over from a previous config (deleted/disarmed alarm)
+  try {
+    foreach ($old in @(Get-ScheduledTask -TaskName 'WakeAlarm*' -ErrorAction SilentlyContinue)) {
+      if ($names -notcontains $old.TaskName) {
+        Unregister-ScheduledTask -TaskName $old.TaskName -Confirm:$false
+      }
+    }
+  } catch { }
 }
 
 function Get-Status {
@@ -59,22 +85,32 @@ function Get-Status {
     if ($null -ne $props.PSObject.Properties['WakeAlarm']) { $startup = $true }
   } catch { }
   $out.startup = $startup
-  $task = @{ exists = $false; wake = $false; state = 'missing'; next = $null }
+  # All wake tasks (one per armed alarm); 'WakeAlarm' itself stays primary
+  # for the existing UI contract.
+  $tasks = @()
   try {
-    $t = Get-ScheduledTask -TaskName 'WakeAlarm' -ErrorAction Stop
-    $task.exists = $true
-    $task.wake = [bool]$t.Settings.WakeToRun
-    $task.state = [string]$t.State
-    try {
-      $i = Get-ScheduledTaskInfo -TaskName 'WakeAlarm' -ErrorAction Stop
-      if ($i.NextRunTime) { $task.next = $i.NextRunTime.ToString('o') }
-      $task.last_result = [int]$i.LastTaskResult
-      if ($i.LastRunTime -and $i.LastRunTime -gt [DateTime]::MinValue) {
-        $task.last_run = $i.LastRunTime.ToString('o')
-      } else { $task.last_run = $null }
-    } catch { }
+    $found = @(Get-ScheduledTask -TaskName 'WakeAlarm*' -ErrorAction SilentlyContinue)
+    foreach ($st in ($found | Sort-Object TaskName)) {
+      $info = $null
+      try { $info = Get-ScheduledTaskInfo -TaskName $st.TaskName -ErrorAction Stop } catch { }
+      $tasks += @{
+        name = [string]$st.TaskName
+        exists = $true
+        wake = [bool]$st.Settings.WakeToRun
+        state = [string]$st.State
+        next = $(if ($info -and $info.NextRunTime) { $info.NextRunTime.ToString('o') } else { $null })
+        last_result = $(if ($info) { [int]$info.LastTaskResult } else { $null })
+        last_run = $(if ($info -and $info.LastRunTime -and $info.LastRunTime -gt [DateTime]::MinValue) { $info.LastRunTime.ToString('o') } else { $null })
+      }
+    }
   } catch { }
+  $primary = $null
+  foreach ($x in $tasks) { if ($x['name'] -eq 'WakeAlarm') { $primary = $x; break } }
+  if (-not $primary -and $tasks.Count -gt 0) { $primary = $tasks[0] }
+  $task = $primary
+  if (-not $task) { $task = @{ exists = $false; wake = $false; state = 'missing'; next = $null } }
   $out.task = $task
+  $out.tasks = $tasks
   # Lid action is a hidden setting on this scheme, so /q never prints it;
   # read the value straight from the power registry instead.
   $lidAc = 'unknown'; $lidDc = 'unknown'
@@ -121,7 +157,15 @@ function Invoke-Setup {
   $lines += 'Start with Windows: enabled'
   Register-WakeTask
   $cfg = Read-Json $ConfigPath
-  $lines += ('Scheduled wake task: registered for ' + $cfg.alarm.time)
+  $times = @()
+  if ($cfg.PSObject.Properties['alarms'] -and @($cfg.alarms).Count -gt 0) {
+    foreach ($x in @($cfg.alarms)) {
+      if ($x.enabled -and @($x.days).Count -gt 0) { $times += [string]$x.time }
+    }
+  }
+  if ($times.Count -eq 0 -and $cfg.alarm.enabled) { $times = @([string]$cfg.alarm.time) }
+  if ($times.Count -eq 0) { $times = @([string]$cfg.alarm.time) }
+  $lines += ('Scheduled wake task(s): registered for ' + ($times -join ', '))
   # Decisive proof (admin only): which wake timers Windows has actually armed.
   try {
     $wt = (& powercfg /waketimers 2>&1 | Out-String).Trim()
