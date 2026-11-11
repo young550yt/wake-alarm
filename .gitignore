@@ -1,0 +1,13 @@
+# local state / runtime artifacts (never commit)
+config.json
+history.json
+*.log
+port.txt
+_paths.json
+_setup_out.txt
+server.lock
+sleep_test_*.json
+
+# generated at runtime
+sounds/
+__pycache__/

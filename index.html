@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wake System</title>
+<style>
+:root{
+  --bg:#0b1120;--bg2:#111a2e;--card:#141f38;--card2:#18243f;--border:#24334f;
+  --text:#e6edf9;--muted:#8ea0bf;--accent:#38bdf8;--amber:#f59e0b;--red:#fb7185;
+  --green:#34d399;--radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:5}
+.logo{font-weight:700;letter-spacing:.12em;font-size:.95rem;display:flex;gap:9px;align-items:center}
+.logo span{background:linear-gradient(90deg,var(--accent),#818cf8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hdr-right{display:flex;gap:10px;align-items:center}
+#clock{font-variant-numeric:tabular-nums;font-size:1.05rem;color:var(--muted)}
+.chip{font-size:.72rem;padding:4px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);color:var(--muted);white-space:nowrap}
+.chip.low{border-color:var(--red);color:var(--red)}
+.chip.ok{border-color:var(--green);color:var(--green)}
+main{max-width:1060px;margin:0 auto;padding:20px 18px 60px;display:flex;flex-direction:column;gap:16px}
+.hidden{display:none!important}
+.banner{padding:12px 16px;border-radius:var(--radius);border:1px solid var(--red);background:rgba(251,113,133,.12);display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:.9rem}
+.banner.warn{border-color:var(--amber);background:rgba(245,158,11,.12)}
+.banner button{margin-left:auto}
+.grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+.label{font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px}
+.big-time{font-size:3.4rem;font-weight:800;letter-spacing:.02em;font-variant-numeric:tabular-nums;line-height:1}
+.big-time .ampm{font-size:1.2rem;color:var(--muted);margin-left:6px}
+.sub{color:var(--muted);font-size:.86rem;margin-top:8px}
+.row{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.switch{position:relative;display:inline-block;width:46px;height:26px}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:#334155;border-radius:99px;transition:.2s;cursor:pointer}
+.switch span:before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+span{background:var(--green)}
+.switch input:checked+span:before{transform:translateX(20px)}
+.commit{font-size:1.05rem;line-height:1.5}
+.letter{font-size:.85rem;color:var(--muted);margin-top:10px;font-style:italic;border-left:2px solid var(--border);padding-left:10px;white-space:pre-wrap}
+.muted{color:var(--muted)}
+button{font-family:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--border);background:var(--card2);color:var(--text);padding:8px 14px;font-size:.84rem;transition:.15s}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#04121d;font-weight:700}
+button.primary:hover{filter:brightness(1.1);color:#04121d}
+button.ghost{background:transparent}
+button.danger:hover{border-color:var(--red);color:var(--red)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{font-family:inherit;background:var(--bg2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:9px 11px;font-size:.9rem;outline:none;transition:.15s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{width:100%;resize:vertical;min-height:60px}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.field label{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.days{display:flex;gap:6px;flex-wrap:wrap}
+.day{padding:7px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:.78rem;user-select:none;cursor:pointer}
+.day.on{background:rgba(56,189,248,.15);border-color:var(--accent);color:var(--accent);font-weight:700}
+.card h3{font-size:.95rem;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h3 .spacer{flex:1}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:760px){.two{grid-template-columns:1fr}}
+.status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:12px}
+.status-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.82rem;display:flex;gap:8px;align-items:center}
+.status-item .mark{font-weight:800}
+.status-item.yes .mark{color:var(--green)}
+.status-item.no .mark{color:var(--red)}
+.status-item.unk .mark{color:var(--amber)}
+pre.log{background:#0a0f1c;border:1px solid var(--border);border-radius:10px;padding:10px;font-size:.76rem;max-height:180px;overflow:auto;white-space:pre-wrap;color:var(--muted)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;text-align:center}
+.stat b{display:block;font-size:1.25rem}
+.stat span{font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+th{font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+tr.test td{opacity:.6}
+.badge{font-size:.66rem;padding:2px 8px;border-radius:99px;border:1px solid var(--border);color:var(--muted)}
+.badge.miss{border-color:var(--red);color:var(--red)}
+.badge.ok{border-color:var(--green);color:var(--green)}
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--card2);border:1px solid var(--accent);color:var(--text);padding:11px 20px;border-radius:10px;opacity:0;transition:.25s;z-index:50;font-size:.88rem;pointer-events:none;max-width:90vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{border-color:var(--red)}
+
+/* ---------------- ring screen ---------------- */
+#ring-screen{position:fixed;inset:0;z-index:100;background:radial-gradient(circle at 50% 28%,#2a1009 0%,#12060c 45%,#070a12 100%);display:flex;align-items:center;justify-content:center;overflow:auto}
+#ring-screen:before{content:'';position:absolute;inset:0;border:6px solid transparent;border-image:linear-gradient(120deg,rgba(251,113,133,.65),rgba(245,158,11,.5),rgba(251,113,133,.65)) 1;animation:pulse 2s infinite;pointer-events:none}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.ring-inner{position:relative;text-align:center;padding:30px 20px;max-width:760px;width:100%}
+#ring-clock{font-size:clamp(4rem,16vw,8.5rem);font-weight:800;font-variant-numeric:tabular-nums;line-height:1;text-shadow:0 0 42px rgba(251,113,133,.45)}
+.stage-dots{display:flex;gap:10px;justify-content:center;align-items:center;margin-top:16px}
+.dot{width:12px;height:12px;border-radius:50%;background:#3b4a63;transition:.3s}
+.dot.on{background:var(--amber);box-shadow:0 0 12px var(--amber);transform:scale(1.35)}
+#stage-label{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--amber);margin-top:10px;font-weight:700}
+#ring-elapsed{color:var(--muted);font-size:.85rem;margin-top:4px}
+.commit-banner{margin-top:22px;background:rgba(20,31,56,.85);border:1px solid rgba(56,189,248,.4);border-radius:16px;padding:16px 20px;backdrop-filter:blur(4px)}
+.commit-banner .label{color:var(--accent)}
+#ring-commit{font-size:1.3rem;font-weight:600;line-height:1.45}
+#ring-letter{font-size:.85rem;color:var(--muted);font-style:italic;margin-top:8px;white-space:pre-wrap}
+#task-box{margin-top:20px;background:rgba(10,15,28,.9);border:1px solid var(--border);border-radius:16px;padding:20px}
+.task-prompt{font-size:1.15rem;font-weight:600;margin-bottom:14px}
+.task-sentence{font-size:1.35rem;font-weight:700;color:var(--accent);font-style:italic;margin-bottom:14px;padding:10px;border:1px dashed var(--border);border-radius:10px}
+.task-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.task-row input{font-size:1.15rem;padding:12px 16px;min-width:230px;text-align:center}
+.task-row button{font-size:1rem;padding:12px 24px}
+.opts{display:flex;flex-direction:column;gap:10px}
+.opts button{padding:13px;font-size:.98rem;text-align:left}
+.seq-target{display:flex;gap:8px;justify-content:center;margin-bottom:14px}
+.seq-chip{width:34px;height:34px;border-radius:9px;border:2px solid rgba(255,255,255,.25)}
+.seq-btns{display:flex;gap:12px;justify-content:center}
+.seq-btn{width:74px;height:74px;border-radius:16px;border:2px solid rgba(255,255,255,.2);font-size:.66rem;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.06em}
+.c-red{background:#be123c}.c-blue{background:#1d4ed8}.c-green{background:#15803d}.c-yellow{background:#b45309}
+.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-9px)}75%{transform:translateX(9px)}}
+.ring-actions{margin-top:18px;display:flex;flex-direction:column;gap:8px;align-items:center}
+#btn-snooze{font-size:1rem;padding:12px 30px}
+.hint{font-size:.78rem;color:var(--muted)}
+#ring-success{text-align:center;padding:30px 20px;max-width:640px}
+#ring-success .tick{font-size:3.6rem}
+#success-time{font-size:1.5rem;font-weight:700;margin-top:8px}
+#success-ring{color:var(--muted);margin-top:6px}
+#success-letter{margin-top:18px;background:rgba(20,31,56,.8);border:1px solid var(--border);border-radius:14px;padding:16px;font-style:italic;white-space:pre-wrap;text-align:left;font-size:.95rem;line-height:1.6}
+.offline{position:fixed;bottom:0;left:0;right:0;background:var(--red);color:#25060c;text-align:center;font-size:.8rem;padding:5px;z-index:60;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">⏰ <span>WAKE SYSTEM</span></div>
+  <div class="hdr-right">
+    <span id="clock">--:--:--</span>
+    <span id="batt-chip" class="chip hidden">🔋 --%</span>
+  </div>
+</header>
+
+<main id="home">
+  <div id="missed-banner" class="banner hidden">
+    <span id="missed-text">⚠ Alarm missed.</span>
+    <button id="btn-ack-missed">OK, acknowledged</button>
+  </div>
+  <div id="batt-banner" class="banner warn hidden">
+    <span id="batt-text">⚠ Low battery.</span>
+  </div>
+  <div id="task-banner" class="banner warn hidden">
+    <span id="task-text"></span>
+  </div>
+
+  <section class="grid">
+    <div class="card">
+      <div class="label">Next wake-up</div>
+      <div class="big-time" id="next-time">--:--</div>
+      <div class="sub" id="next-meta">–</div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="armed"><span></span></label>
+        <span class="muted" id="armed-label">Armed</span>
+        <span class="chip hidden" id="snooze-chip"></span>
+      </div>
+      <div class="row">
+        <button id="btn-test-ring" title="Full alarm with sound, dismissable">🔔 Test ring (sound)</button>
+        <button id="btn-test-silent" class="ghost" title="Open the alarm screen silently">👀 Preview screen</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Today's commitment</div>
+      <div class="commit" id="commit-text">–</div>
+      <div class="letter" id="letter-text"></div>
+      <div class="row"><button id="btn-edit-reason" class="ghost">✏️ Edit reason</button></div>
+      <div class="sub" style="margin-top:12px">Your brain needs a reason to get up — even “keep my wake-up time consistent” counts. You don't need an exciting plan every day.</div>
+    </div>
+  </section>
+
+  <section class="card" id="alarm-card">
+    <h3>🌅 Wake-up commitment <span class="spacer"></span><span class="muted" id="next-preview"></span></h3>
+    <div class="two">
+      <div class="field"><label>Wake time</label><input type="time" id="in-time" step="60"></div>
+      <div class="field"><label>Armed</label>
+        <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="in-enabled"><span></span></label><span class="muted">Alarm active on these days</span></div>
+      </div>
+    </div>
+    <div class="field"><label>Days</label><div class="days" id="days"></div></div>
+    <div class="field"><label>Why are you waking up? (shown when the alarm rings)</label>
+      <textarea id="in-commit" placeholder="e.g. Complete the planned morning study session."></textarea></div>
+    <div class="field"><label>Message to your future self (spoken at stage 4, shown after you dismiss)</label>
+      <textarea id="in-letter" placeholder="Future me: last night you decided this mattered because..."></textarea></div>
+    <div class="row"><button class="primary" id="btn-save-alarm">Save commitment</button>
+    <span class="hint hidden" id="unsaved-hint" style="color:var(--amber)">● Unsaved changes</span>
+    <span class="hint">Consistency itself is the goal — a good reason doesn't have to be exciting.</span></div>
+  </section>
+
+  <section class="card">
+    <h3>🪟 Windows reliability <span class="spacer"></span><span class="muted" id="win-checked"></span></h3>
+    <div id="wake-warn" class="banner hidden"></div>
+    <div class="status-grid" id="win-grid"></div>
+    <div class="row">
+      <button class="primary" id="btn-setup">🛠 Run Windows setup</button>
+      <span class="hint">Wakes the PC at alarm time · starts with Windows · lid-close keeps running · wake timers on. A UAC prompt appears once.</span>
+    </div>
+    <div class="row">
+      <button id="btn-sleep-test" class="danger">💤 Sleep test (2 min)</button>
+      <span class="hint">Sleeps the PC now, wakes it via the scheduled task ~2 min later — proves the whole wake path. Save your work first.</span>
+      <span class="muted" id="sleep-test-status"></span>
+    </div>
+    <pre class="log hidden" id="setup-log"></pre>
+  </section>
+
+  <section class="card">
+    <h3>⚙️ Alarm behaviour</h3>
+    <div class="two">
+      <div class="field"><label>Escalation: stage 1 lasts (s)</label><input type="number" id="s-d1" min="5" max="600"></div>
+      <div class="field"><label>Stage 2 lasts (s)</label><input type="number" id="s-d2" min="5" max="600"></div>
+      <div class="field"><label>Stage 3 lasts (s)</label><input type="number" id="s-d3" min="5" max="600"></div>
+      <div class="field"><label>Then stage 4 repeats every (s of voice)</label><input type="number" id="s-voice" min="5" max="120"></div>
+      <div class="field"><label>Dismissal task</label>
+        <select id="s-task">
+          <option value="random">Random (recommended)</option>
+          <option value="math">Maths problem</option>
+          <option value="sentence">Type a sentence</option>
+          <option value="quiz">Commitment quiz</option>
+          <option value="sequence">Colour sequence</option>
+        </select></div>
+      <div class="field"><label>Maths difficulty</label>
+        <select id="s-math"><option value="easy">Easy (addition)</option><option value="medium">Medium (multiplication)</option><option value="hard">Hard (three steps)</option></select></div>
+      <div class="field"><label>Snooze length (min)</label><input type="number" id="s-snoozemin" min="1" max="30"></div>
+      <div class="field"><label>Snoozes allowed (0 = none)</label><input type="number" id="s-snoozemax" min="0" max="5"></div>
+      <div class="field"><label>Ring grace: how late it may still ring (min)</label><input type="number" id="s-grace" min="5" max="240"></div>
+      <div class="field"><label>Low-battery warning below (%)</label><input type="number" id="s-batt" min="5" max="90"></div>
+      <div class="field"><label>Stage 4 voice reminder</label>
+        <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="s-voiceon"><span></span></label><span class="muted">Speaks your commitment</span></div></div>
+      <div class="field"><label>Open fullscreen window at ring time</label>
+        <div class="row" style="margin-top:0"><label class="switch"><input type="checkbox" id="s-autoopen"><span></span></label><span class="muted">Recommended when no page is open</span></div></div>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-save-settings">Save behaviour</button>
+      <button id="btn-sound-test" class="ghost">🔊 Test current stage sound</button>
+      <button id="btn-voice-test" class="ghost">🗣 Test voice</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>📊 Sleep &amp; alarm history <span class="spacer"></span>
+      <button id="btn-clear-history" class="ghost danger">🗑 Clear</button></h3>
+    <div class="stats" id="stats"></div>
+    <div style="overflow:auto"><table id="hist-table">
+      <thead><tr><th>Scheduled</th><th>State</th><th>Rang → dismissed</th><th>Snoozes</th><th>Battery</th><th>Task</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="sub">Track: scheduled time · actual dismissal · snoozes · missed · laptop state at ring time — so you can see which configuration actually works.</div>
+  </section>
+</main>
+
+<!-- ---------------- ring screen ---------------- -->
+<div id="ring-screen" class="hidden">
+  <div class="ring-inner" id="ring-live">
+    <div id="ring-clock">--:--</div>
+    <div class="stage-dots"><span class="dot" data-s="1"></span><span class="dot" data-s="2"></span><span class="dot" data-s="3"></span><span class="dot" data-s="4"></span></div>
+    <div id="stage-label">Stage 1 · gentle chime</div>
+    <div id="ring-elapsed">ringing for 0:00</div>
+    <div class="commit-banner">
+      <div class="label">Your commitment</div>
+      <div id="ring-commit">–</div>
+      <div id="ring-letter"></div>
+    </div>
+    <div id="task-box"></div>
+    <div class="ring-actions">
+      <button id="btn-snooze">Snooze</button>
+      <div class="hint">The alarm keeps ringing until you dismiss it. Completing the task is a nudge, not proof you're fully awake.</div>
+    </div>
+  </div>
+  <div id="ring-success" class="hidden">
+    <div class="tick">✅</div>
+    <div id="success-time">Dismissed</div>
+    <div id="success-ring"></div>
+    <div id="success-letter"></div>
+    <div class="row" style="justify-content:center"><button class="primary" id="btn-done">I'm up</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const DAY_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const STAGE_NAMES = ['gentle chime','alternating pattern','urgent beeps','voice reminder'];
+let S = null, fetchedAt = 0, ringingShown = false, taskBusy = false;
+let seqClicks = [];
+
+async function api(path, method, body){
+  const opts = {method: method || 'GET', headers:{'Content-Type':'application/json'}};
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  let j = null;
+  try { j = await r.json(); } catch(e){ j = {error:'bad response'}; }
+  if (!r.ok) { const err = new Error(j.error || j.message || ('HTTP '+r.status)); err.data = j; throw err; }
+  return j;
+}
+function toast(msg, isErr){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.className = '', 3600);
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function serverNow(){
+  if (!S) return new Date();
+  return new Date(Date.parse(S.now) + (Date.now() - fetchedAt));
+}
+function fmtTime(iso){
+  if (!iso) return '--:--';
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function fmtDur(sec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  if (h) return h + 'h ' + m + 'm';
+  if (m) return m + 'm ' + s + 's';
+  return s + 's';
+}
+function fmtDate(iso){
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + fmtTime(iso);
+}
+const clockTick = () => {
+  const d = serverNow();
+  $('#clock').textContent = d.toTimeString().slice(0,8);
+  const rc = $('#ring-clock');
+  if (rc && !$('#ring-screen').classList.contains('hidden')){
+    rc.textContent = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+  }
+};
+setInterval(clockTick, 500);
+
+// ------------------------------------------------------------ state & render
+let loadSeq = 0;
+async function loadState(){
+  const seq = ++loadSeq;
+  try {
+    const j = await api('/api/state');
+    // Drop out-of-order responses: an older in-flight poll landing late must
+    // not overwrite fresher state (it could re-show the ring screen after a
+    // snooze/dismiss and leave stale UI behind).
+    if (seq !== loadSeq) return;
+    S = j;
+    fetchedAt = Date.now();
+    $('#offline') && $('#offline').remove();
+    render();
+  } catch(e){
+    if (seq !== loadSeq) return;
+    if (!$('#offline')){
+      const d = document.createElement('div');
+      d.id = 'offline'; d.className = 'offline';
+      d.textContent = '⚠ Alarm server is not reachable — the alarm will not ring while it is down.';
+      document.body.appendChild(d);
+    }
+  }
+}
+setInterval(loadState, 1500);
+setInterval(() => { api('/api/heartbeat','POST',{}).catch(()=>{}); }, 5000);
+api('/api/heartbeat','POST',{}).catch(()=>{});
+
+function render(){
+  if (!S) return;
+  renderHeader(); renderNext(); renderCommit(); renderForm(); renderWindows();
+  renderSettings(); renderMissed(); renderRing(); loadHistory._pending || loadHistory();
+}
+
+function renderHeader(){
+  const b = S.battery, chip = $('#batt-chip');
+  if (b){
+    chip.classList.remove('hidden');
+    chip.textContent = '🔋 ' + b.pct + '%' + (b.charging ? ' ⚡' : '');
+    chip.className = 'chip' + (b.pct <= S.settings.battery_warn_pct && !b.charging ? ' low' : (b.charging ? ' ok' : ''));
+    const warn = b.pct <= S.settings.battery_warn_pct && !b.charging && S.alarm.enabled;
+    $('#batt-banner').classList.toggle('hidden', !warn);
+    if (warn) $('#batt-text').textContent = '⚠ Battery ' + b.pct + '% and not charging — plug in tonight or the alarm may not ring.';
+  } else {
+    chip.classList.add('hidden');
+    $('#batt-banner').classList.add('hidden');
+  }
+}
+
+function renderNext(){
+  const armed = $('#armed');
+  armed.checked = !!S.alarm.enabled;
+  $('#armed-label').textContent = S.alarm.enabled ? 'Armed' : 'Off';
+  const nt = $('#next-time');
+  if (S.ringing){
+    nt.innerHTML = 'NOW<span class="ampm"> ringing</span>';
+    $('#next-meta').textContent = 'Alarm started at ' + fmtTime(S.ringing.started_at) + ' · ' + (S.ringing.kind === 'test' ? 'TEST' : 'wake-up');
+  } else if (S.next){
+    nt.innerHTML = esc(fmtTime(S.next));
+    $('#next-meta').textContent = 'in ' + fmtDur(S.next_in_s) + ' · ' + dayText(S.alarm.days);
+  } else {
+    nt.innerHTML = '--:--';
+    $('#next-meta').textContent = S.alarm.enabled ? 'no day selected' : 'alarm is off';
+  }
+  const sc = $('#snooze-chip');
+  if (S.snoozed_until){
+    sc.classList.remove('hidden');
+    sc.textContent = '😴 snoozed until ' + fmtTime(S.snoozed_until);
+  } else sc.classList.add('hidden');
+}
+function dayText(days){
+  const d = (days||[]).slice().sort((a,b)=>a-b);
+  if (d.length === 7) return 'every day';
+  if (d.length === 5 && d.join() === '0,1,2,3,4') return 'weekdays';
+  if (d.length === 2 && d.join() === '5,6') return 'weekends';
+  if (!d.length) return 'no days';
+  return d.map(i => DAY_LABELS[i]).join(', ');
+}
+
+function renderCommit(){
+  const c = (S.alarm.commitment || '').trim();
+  $('#commit-text').textContent = c || 'No reason set yet — tell yourself why tomorrow matters.';
+  if (!c) $('#commit-text').className = 'commit muted';
+  else $('#commit-text').className = 'commit';
+  const l = (S.alarm.letter || '').trim();
+  $('#letter-text').textContent = l ? '“' + l + '”' : '';
+  $('#letter-text').classList.toggle('hidden', !l);
+}
+
+let daysSel = [];
+let formDirty = false;
+function markDirty(){
+  formDirty = true;
+  const h = $('#unsaved-hint');
+  if (h) h.classList.remove('hidden');
+}
+function renderForm(){
+  // While the user is editing (formDirty), never overwrite their input:
+  // state polls run every 1.5 s and used to snap the time field back.
+  if (!formDirty){
+    $('#in-time').value = S.alarm.time;
+    $('#in-enabled').checked = !!S.alarm.enabled;
+  }
+  if (!renderForm._loaded){
+    daysSel = (S.alarm.days || []).slice();
+    $('#in-commit').value = S.alarm.commitment || '';
+    $('#in-letter').value = S.alarm.letter || '';
+    renderForm._loaded = true;
+    renderDays();
+  }
+  updatePreview();
+}
+function renderDays(){
+  $('#days').innerHTML = DAY_LABELS.map((l,i) =>
+    '<span class="day' + (daysSel.includes(i) ? ' on' : '') + '" data-d="' + i + '">' + l + '</span>').join('');
+  $$('#days .day').forEach(el => el.onclick = () => {
+    const d = +el.dataset.d;
+    daysSel = daysSel.includes(d) ? daysSel.filter(x => x !== d) : daysSel.concat(d).sort();
+    markDirty();
+    renderDays(); updatePreview();
+  });
+}
+async function updatePreview(){
+  try {
+    const t = $('#in-time').value || S.alarm.time;
+    const r = await api('/api/preview-next?time=' + encodeURIComponent(t) + '&days=' + daysSel.join(','));
+    $('#next-preview').textContent = r.next ? 'next: ' + fmtDate(r.next) : 'no day selected';
+  } catch(e){ $('#next-preview').textContent = ''; }
+}
+$('#in-time').addEventListener('input', () => { markDirty(); updatePreview(); });
+$('#in-enabled').addEventListener('change', markDirty);
+$('#in-commit').addEventListener('input', markDirty);
+$('#in-letter').addEventListener('input', markDirty);
+
+function wakeTaskWarning(w){
+  const t = w.task || {};
+  const NOT_RUN_YET = 267011;   // 0x41303: task has never executed
+  const RUNNING = 267009;       // 0x41301
+  const TERMINATED = 267014;    // 0x41306: stopped by the user
+  if (!t.exists) return '⚠ Scheduled wake task is missing — run Windows setup so the PC can wake for your alarm.';
+  if (t.state !== 'Ready' && t.state !== 'Running')
+    return '⚠ Wake task state is "' + (t.state || '?') + '" — run Windows setup to repair it.';
+  if (typeof t.last_result === 'number' &&
+      ![0, NOT_RUN_YET, RUNNING, TERMINATED].includes(t.last_result))
+    return '⚠ Wake task last failed (result ' + t.last_result + ') — run Windows setup to re-register it.';
+  if (S.alarm.enabled){
+    if (!t.next) return '⚠ Wake task has no next run time — run Windows setup.';
+    if (S.next){
+      const drift = Math.abs(new Date(t.next) - new Date(S.next));
+      if (drift > 5 * 60 * 1000)
+        return '⚠ Wake task next run (' + fmtDate(t.next) + ') does not match your alarm (' + fmtDate(S.next) + ') — re-save the alarm.';
+    }
+  }
+  return null;
+}
+
+function renderWindows(){
+  const w = S.windows;
+  const grid = $('#win-grid');
+  $('#win-checked').textContent = w && !w.error ? '' : (w && w.error ? 'status unavailable' : 'checking…');
+  if (!w || w.error){
+    grid.innerHTML = '<div class="status-item unk"><span class="mark">…</span><span>' + esc((w && w.error) || 'Reading Windows status…') + '</span></div>';
+    return;
+  }
+  const yn = v => String(v) === '1' ? 'enabled' : (String(v) === '0' ? 'disabled' : 'unknown');
+  const lid = v => String(v) === '0' ? 'do nothing ✓' : (String(v) === 'unknown' ? 'unknown' : 'sleeps ✗');
+  const items = [
+    ['Scheduled wake task', w.task && w.task.exists ? (w.task.wake ? 'yes' : 'exists (no wake)') : 'no', w.task && w.task.exists && w.task.wake],
+    ['Task state', w.task ? (w.task.state || '?') : '?', w.task && (w.task.state === 'Ready' || w.task.state === 'Running')],
+    ['Start with Windows', w.startup ? 'yes' : 'no', !!w.startup],
+    ['Wake timers (plugged in)', yn(w.wake_timers_ac), String(w.wake_timers_ac) === '1'],
+    ['Wake timers (battery)', yn(w.wake_timers_dc), String(w.wake_timers_dc) === '1'],
+    ['Lid close (plugged in)', lid(w.lid_ac), String(w.lid_ac) === '0'],
+    ['Lid close (battery)', lid(w.lid_dc), String(w.lid_dc) === '0'],
+  ];
+  grid.innerHTML = items.map(([k, v, ok]) =>
+    '<div class="status-item ' + (ok === true ? 'yes' : ok === false ? 'no' : 'unk') + '">' +
+    '<span class="mark">' + (ok === true ? '✓' : ok === false ? '✗' : '?') + '</span>' +
+    '<span><b>' + esc(k) + '</b><br><span class="muted">' + esc(v) + '</span></span></div>').join('');
+  if (w.task && w.task.next){
+    grid.insertAdjacentHTML('beforeend',
+      '<div class="status-item yes"><span class="mark">⏱</span><span><b>Next wake run</b><br><span class="muted">' +
+      esc(fmtDate(w.task.next)) + (typeof w.task.last_result === 'number' && w.task.last_result !== 267011
+        ? ' · last result ' + w.task.last_result : ' · never run yet') + '</span></span></div>');
+  }
+  const warn = wakeTaskWarning(w);
+  const wb = $('#wake-warn');
+  wb.classList.toggle('hidden', !warn);
+  if (warn) wb.textContent = warn;
+  const st = S.sleep_test;
+  const el = $('#sleep-test-status');
+  if (st && st.stage === 'armed'){
+    el.classList.remove('hidden');
+    el.textContent = '⏳ sleeping soon — wake expected ' + fmtTime(st.wake_at);
+  } else if (st && st.stage === 'done'){
+    el.classList.remove('hidden');
+    el.textContent = '✓ woken ' + fmtTime(st.woken_at) + ' (expected ' + fmtTime(st.wake_at) + ') — wake path works';
+  } else if (st && st.stage === 'failed'){
+    el.classList.remove('hidden');
+    el.textContent = '✗ no wake received by ' + fmtTime(st.wake_at) + ' — wake path failed on this machine';
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+function renderSettings(){
+  if (renderSettings._loaded) return;
+  const s = S.settings;
+  $('#s-d1').value = s.stage_delays[0]; $('#s-d2').value = s.stage_delays[1]; $('#s-d3').value = s.stage_delays[2];
+  $('#s-voice').value = s.voice_every; $('#s-task').value = s.dismiss_task; $('#s-math').value = s.math_difficulty;
+  $('#s-snoozemin').value = s.snooze_minutes; $('#s-snoozemax').value = s.snooze_max;
+  $('#s-grace').value = s.grace_minutes; $('#s-batt').value = s.battery_warn_pct;
+  $('#s-voiceon').checked = !!s.voice_enabled; $('#s-autoopen').checked = !!s.auto_open;
+  renderSettings._loaded = true;
+}
+
+function renderMissed(){
+  const m = S.missed;
+  $('#missed-banner').classList.toggle('hidden', !m);
+  if (m){
+    const when = fmtDate(m.scheduled);
+    let why = (m.reason || '').replace('pc_was_off_or_asleep_until_', 'PC was asleep/off until ')
+                               .replace('app_not_running', 'the alarm app was not running')
+                               .replace('never_dismissed', 'it rang but was never dismissed');
+    $('#missed-text').textContent = '⚠ Alarm for ' + when + ' was missed — ' + why + '.';
+  }
+  // task-update warning (from last save)
+}
+
+// ------------------------------------------------------------ ring screen
+function renderRing(){
+  const show = !!S.ringing;
+  const screen = $('#ring-screen');
+  if (show){
+    screen.classList.remove('hidden');
+    $('#ring-live').classList.toggle('hidden', !!ringingShown && !$('#ring-success').classList.contains('hidden'));
+    if (!ringingShown){
+      $('#ring-success').classList.add('hidden');
+      $('#ring-live').classList.remove('hidden');
+      ringingShown = true;
+      $('#btn-done').onclick = () => { ringingShown = false; screen.classList.add('hidden'); };
+    }
+    const r = S.ringing;
+    $('#ring-commit').textContent = S.alarm.commitment || 'Get up at your planned time.';
+    const l = (S.alarm.letter || '').trim();
+    $('#ring-letter').textContent = l ? '“' + l + '”' : '';
+    $('#ring-letter').classList.toggle('hidden', !l);
+    $$('.dot').forEach(d => d.classList.toggle('on', +d.dataset.s <= r.stage));
+    $('#stage-label').textContent = 'Stage ' + r.stage + ' · ' + (STAGE_NAMES[r.stage-1] || '') + (r.silent ? ' (silent preview)' : '');
+    $('#ring-elapsed').textContent = 'ringing for ' + fmtDur(r.elapsed_s);
+    const sn = $('#btn-snooze');
+    const used = r.snoozes_used || 0;
+    const maxn = (r.snooze_max != null) ? r.snooze_max : S.settings.snooze_max;
+    const left = Math.max(0, maxn - used);
+    if (r.kind === 'test') sn.textContent = left > 0 ? 'Snooze (test)' : 'No snoozes left';
+    else sn.textContent = left > 0 ? 'Snooze (' + left + ' left)' : 'No snoozes left';
+    sn.disabled = left <= 0;
+    renderTask(r.task);
+  } else if (ringingShown){
+    ringingShown = false;
+    screen.classList.add('hidden');
+    $('#ring-live').classList.remove('hidden');
+    $('#ring-success').classList.add('hidden');
+  }
+}
+
+function renderTask(t){
+  const box = $('#task-box');
+  if (!t){ box.innerHTML = ''; return; }
+  const key = JSON.stringify(t);
+  if (box._key === key) return;
+  box._key = key;
+  seqClicks = [];
+  if (t.type === 'math'){
+    box.innerHTML = '<div class="task-prompt">' + esc(t.prompt) + '</div>' +
+      '<div class="task-row"><input id="task-input" type="text" inputmode="numeric" autocomplete="off" placeholder="Answer">' +
+      '<button class="primary" id="btn-dismiss">Dismiss alarm</button></div>';
+    $('#btn-dismiss').onclick = doDismiss;
+    $('#task-input').addEventListener('keydown', e => { if (e.key === 'Enter') doDismiss(); });
+    setTimeout(() => $('#task-input') && $('#task-input').focus(), 150);
+  } else if (t.type === 'sentence'){
+    box.innerHTML = '<div class="task-prompt">' + esc(t.prompt) + '</div>' +
+      '<div class="task-sentence">' + esc(t.sentence) + '</div>' +
+      '<div class="task-row"><input id="task-input" type="text" autocomplete="off" placeholder="Type it here" style="min-width:320px">' +
+      '<button class="primary" id="btn-dismiss">Dismiss alarm</button></div>';
+    $('#btn-dismiss').onclick = doDismiss;
+    $('#task-input').addEventListener('keydown', e => { if (e.key === 'Enter') doDismiss(); });
+    setTimeout(() => $('#task-input') && $('#task-input').focus(), 150);
+  } else if (t.type === 'quiz'){
+    box.innerHTML = '<div class="task-prompt">' + esc(t.prompt) + '</div><div class="opts">' +
+      t.options.map((o,i) => '<button data-i="' + i + '">' + esc(o) + '</button>').join('') + '</div>';
+    $$('#task-box .opts button').forEach(b => b.onclick = () => sendAnswer(+b.dataset.i));
+  } else if (t.type === 'sequence'){
+    box.innerHTML = '<div class="task-prompt">' + esc(t.prompt) + '</div>' +
+      '<div class="seq-target">' + t.target.map(c => '<span class="seq-chip c-' + c + '"></span>').join('') + '</div>' +
+      '<div class="seq-btns">' + ['red','blue','green','yellow'].map(c =>
+        '<button class="seq-btn c-' + c + '" data-c="' + c + '">' + c + '</button>').join('') + '</div>';
+    $$('#task-box .seq-btn').forEach(b => b.onclick = () => {
+      seqClicks.push(b.dataset.c);
+      const t2 = S.ringing && S.ringing.task;
+      if (t2 && seqClicks.length >= t2.target.length){
+        if (seqClicks.join() === t2.target.join()) sendAnswer(seqClicks.slice());
+        else { seqClicks = []; box.classList.add('shake'); setTimeout(() => box.classList.remove('shake'), 450); toast('Wrong order — start again', true); }
+      }
+    });
+  }
+}
+
+async function doDismiss(){
+  if (taskBusy) return;
+  const v = $('#task-input') ? $('#task-input').value : '';
+  taskBusy = true;
+  try {
+    const r = await api('/api/dismiss','POST',{answer: v});
+    showSuccess(r);
+  } catch(e){
+    toast(e.data && e.data.message || e.message, true);
+    const box = $('#task-box');
+    box.classList.add('shake'); setTimeout(() => box.classList.remove('shake'), 450);
+    if ($('#task-input')) { $('#task-input').value = ''; $('#task-input').focus(); }
+  } finally { taskBusy = false; }
+}
+async function sendAnswer(ans){
+  if (taskBusy) return;
+  taskBusy = true;
+  try {
+    const r = await api('/api/dismiss','POST',{answer: ans});
+    showSuccess(r);
+  } catch(e){
+    toast(e.data && e.data.message || e.message, true);
+    const box = $('#task-box');
+    box.classList.add('shake'); setTimeout(() => box.classList.remove('shake'), 450);
+  } finally { taskBusy = false; }
+}
+function showSuccess(r){
+  // Mark the ring as no longer "shown" FIRST: the loadState() below would
+  // otherwise see ringing=null + ringingShown=true and hide this screen.
+  ringingShown = false;
+  $('#ring-live').classList.add('hidden');
+  $('#ring-success').classList.remove('hidden');
+  $('#success-time').textContent = '✅ Dismissed at ' + (r.dismissed_at ? fmtTime(r.dismissed_at) : '--:--');
+  $('#success-ring').textContent = 'The alarm rang for ' + fmtDur(r.ring_seconds || 0) + '.';
+  const l = (r.letter || S.alarm.letter || '').trim();
+  $('#success-letter').textContent = l ? 'A message from your past self:\n\n“' + l + '”' : '';
+  $('#success-letter').classList.toggle('hidden', !l);
+  $('#btn-done').onclick = () => {
+    ringingShown = false;
+    $('#ring-screen').classList.add('hidden');
+    $('#ring-live').classList.remove('hidden');
+    $('#ring-success').classList.add('hidden');
+    loadState(); loadHistory(true);
+  };
+  loadState();
+}
+
+$('#btn-snooze').onclick = async () => {
+  try {
+    const r = await api('/api/snooze','POST',{});
+    toast('Snoozed until ' + fmtTime(r.snoozed_until) + ' (' + r.remaining + ' left)');
+    ringingShown = false;
+    $('#ring-screen').classList.add('hidden');
+    $('#ring-live').classList.remove('hidden');
+    $('#ring-success').classList.add('hidden');
+    loadState();
+  } catch(e){ toast(e.data && e.data.message || e.message, true); }
+};
+
+// ------------------------------------------------------------ home actions
+$('#armed').addEventListener('change', async () => {
+  await saveAlarm({enabled: $('#armed').checked}).catch(()=>{});
+});
+$('#btn-edit-reason').onclick = () => {
+  $('#alarm-card').scrollIntoView({behavior:'smooth', block:'center'});
+  setTimeout(() => $('#in-commit').focus(), 400);
+};
+async function saveAlarm(patch){
+  const alarm = Object.assign({}, S.alarm, patch, {
+    time: patch.time !== undefined ? patch.time : $('#in-time').value,
+    days: patch.days !== undefined ? patch.days : daysSel,
+    commitment: patch.commitment !== undefined ? patch.commitment : $('#in-commit').value,
+    letter: patch.letter !== undefined ? patch.letter : $('#in-letter').value,
+    enabled: patch.enabled !== undefined ? patch.enabled : $('#in-enabled').checked,
+  });
+  if (alarm.enabled && (!alarm.days || alarm.days.length === 0)){
+    toast('Select at least one day — an armed alarm with no days never rings.', true);
+    render();
+    throw new Error('no days selected');
+  }
+  try {
+    const r = await api('/api/alarm','POST',{alarm: alarm});
+    S.alarm = r.alarm;
+    formDirty = false;
+    const hint = $('#unsaved-hint');
+    if (hint) hint.classList.add('hidden');
+    renderForm._loaded = false;
+    render();
+    if (r.task_update && r.task_update.startsWith('failed')){
+      $('#task-banner').classList.remove('hidden');
+      $('#task-text').textContent = '⚠ Wake task not updated: ' + r.task_update.slice(8) + ' — re-run Windows setup.';
+    } else {
+      $('#task-banner').classList.add('hidden');
+      toast('✓ Saved — ' + (r.task_update === 'ok' ? 'wake task updated' : 'wake task untouched'));
+    }
+    return r;
+  } catch(e){
+    toast(e.message, true);
+    render();
+    throw e;
+  }
+}
+$('#btn-save-alarm').onclick = () => saveAlarm({}).catch(()=>{});
+$('#btn-test-ring').onclick = async () => {
+  try { await api('/api/test-ring','POST',{silent:false}); toast('Alarm ringing — go dismiss it!'); loadState(); }
+  catch(e){ toast(e.message, true); }
+};
+$('#btn-test-silent').onclick = async () => {
+  try { await api('/api/test-ring','POST',{silent:true}); toast('Preview opened (silent)'); loadState(); }
+  catch(e){ toast(e.message, true); }
+};
+$('#btn-ack-missed').onclick = async () => {
+  try { await api('/api/ack-missed','POST',{}); loadState(); } catch(e){}
+};
+$('#btn-sleep-test').onclick = async () => {
+  if (!confirm('Sleep test:\n\n• The PC sleeps within ~3 seconds\n• A scheduled task wakes it in ~2 minutes\n• The result appears here after the wake\n\nSave your work first. Continue?')) return;
+  try {
+    const r = await api('/api/sleep-test','POST',{});
+    if (!r.ok){ toast(r.error || 'Sleep test failed to start', true); return; }
+    toast('💤 Sleeping in ~3 s — wake expected at ' + fmtTime(r.wake_at));
+    $('#sleep-test-status').classList.remove('hidden');
+    $('#sleep-test-status').textContent = '⏳ armed — wake expected ' + fmtTime(r.wake_at);
+  } catch(e){ toast(e.message, true); }
+};
+$('#btn-setup').onclick = async () => {
+  if (!confirm('Run Windows setup?\n\n• Wake timers enabled\n• Lid close (plugged in) = keep running\n• Start with Windows\n• Scheduled wake task registered\n\nA UAC prompt will appear — click Yes.')) return;
+  const btn = $('#btn-setup');
+  btn.disabled = true; btn.textContent = '⏳ Waiting for UAC…';
+  $('#setup-log').classList.remove('hidden');
+  $('#setup-log').textContent = 'Running…';
+  try {
+    const r = await api('/api/windows/setup','POST',{});
+    $('#setup-log').textContent = (r.output || []).join('\n') || JSON.stringify(r);
+    toast(r.ok ? '✓ Windows setup complete' : 'Setup failed — see log', !r.ok);
+  } catch(e){
+    $('#setup-log').textContent = e.message;
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = '🛠 Run Windows setup';
+    renderSettings._loaded = false; S = null; loadState();
+  }
+};
+$('#btn-save-settings').onclick = async () => {
+  const settings = {
+    stage_delays: [$('#s-d1').value, $('#s-d2').value, $('#s-d3').value],
+    voice_every: $('#s-voice').value,
+    dismiss_task: $('#s-task').value,
+    math_difficulty: $('#s-math').value,
+    snooze_minutes: $('#s-snoozemin').value,
+    snooze_max: $('#s-snoozemax').value,
+    grace_minutes: $('#s-grace').value,
+    battery_warn_pct: $('#s-batt').value,
+    voice_enabled: $('#s-voiceon').checked,
+    auto_open: $('#s-autoopen').checked,
+  };
+  try { await api('/api/settings','POST',{settings}); toast('✓ Behaviour saved'); loadState(); }
+  catch(e){ toast(e.message, true); }
+};
+$('#btn-sound-test').onclick = async () => {
+  try {
+    const stage = S.ringing ? S.ringing.stage : 3;
+    await api('/api/sound-test','POST',{stage, seconds:2.5});
+    toast('Playing stage ' + stage + ' for 2.5s — adjust system volume to a level that wakes you.');
+  } catch(e){ toast(e.message, true); }
+};
+$('#btn-voice-test').onclick = async () => {
+  try { await api('/api/voice-test','POST',{}); toast('Voice test speaking…'); }
+  catch(e){ toast(e.message, true); }
+};
+$('#btn-clear-history').onclick = async () => {
+  if (!confirm('Clear all alarm history?')) return;
+  try { await api('/api/history/clear','POST',{}); loadHistory(true); toast('History cleared'); }
+  catch(e){ toast(e.message, true); }
+};
+
+// ------------------------------------------------------------ history
+async function loadHistory(force){
+  if (!force && loadHistory._pending) return;
+  loadHistory._pending = true;
+  try {
+    const h = await api('/api/history');
+    renderStats(h.stats);
+    renderRows(h.records);
+  } catch(e){} finally { loadHistory._pending = false; }
+}
+function renderStats(st){
+  const avg = st.avg_dismiss_s == null ? '–' : fmtDur(st.avg_dismiss_s);
+  const otp = st.on_time_pct == null ? '–' : st.on_time_pct + '%';
+  $('#stats').innerHTML = [
+    [st.wake_total, 'alarms due'],
+    [st.wake_dismissed, 'dismissed'],
+    [st.wake_missed, 'missed'],
+    [st.snoozes, 'snoozes'],
+    [avg, 'avg to dismiss'],
+    [otp, 'within 5 min'],
+    [st.tests, 'tests'],
+  ].map(([b, s]) => '<div class="stat"><b>' + esc(String(b)) + '</b><span>' + s + '</span></div>').join('');
+}
+function renderRows(recs){
+  const tb = $('#hist-table tbody');
+  if (!recs.length){ tb.innerHTML = '<tr><td colspan="6" class="muted">No alarms yet.</td></tr>'; return; }
+  tb.innerHTML = recs.map(r => {
+    let state, cls;
+    if (r.missed){ state = '<span class="badge miss">missed</span>'; cls = ''; }
+    else if (r.dismissed_at){ state = '<span class="badge ok">dismissed</span>'; cls = ''; }
+    else if (r.ring_at){ state = '<span class="badge miss">never dismissed</span>'; cls = ''; }
+    else { state = '<span class="badge">not rung</span>'; cls = ''; }
+    if (r.kind === 'test') cls = 'test';
+    const dur = r.dismissed_at && r.ring_at
+      ? fmtDur((new Date(r.dismissed_at) - new Date(r.ring_at)) / 1000)
+      : (r.ring_at ? '–' : '');
+    const batt = r.battery == null ? '–' : r.battery + '%' + (r.charging ? ' ⚡' : '');
+    return '<tr class="' + cls + '"><td>' + esc(fmtDate(r.scheduled)) +
+      (r.kind === 'test' ? ' <span class="badge">test</span>' : '') + '</td><td>' + state +
+      '</td><td>' + esc(dur) + '</td><td>' + (r.snoozes || 0) +
+      '</td><td>' + esc(batt) + '</td><td>' + esc(r.task || '–') + '</td></tr>';
+  }).join('');
+}
+
+loadState();
+clockTick();
+</script>
+</body>
+</html>
